@@ -30,6 +30,9 @@ build/
 backend/ais_cache.json
 backend/carrier_cache.json
 backend/cctv.db
+backend/data/cctv.db
+backend/data/sat_gp_cache.json
+backend/data/sat_gp_cache_meta.json
 *.sqlite3
 
 # OS generated files
