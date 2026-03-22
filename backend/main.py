@@ -384,6 +384,58 @@ async def api_get_nearest_radios_list(
 ):
     return find_nearest_openmhz_systems_list(lat, lng, limit=limit)
 
+# ---------------------------------------------------------------------------
+# Threat Level & Geofence & Data Export
+# ---------------------------------------------------------------------------
+from services.threat_level import compute_threat_level
+from services.geofence import get_geofences, add_geofence, remove_geofence, check_geofence_alerts
+from services.data_export import export_geojson, export_csv
+
+@app.get("/api/threat-level")
+@limiter.limit("60/minute")
+async def api_threat_level(request: Request):
+    d = get_latest_data()
+    return compute_threat_level(d)
+
+@app.get("/api/geofences")
+@limiter.limit("30/minute")
+async def api_get_geofences(request: Request):
+    return get_geofences()
+
+@app.post("/api/geofences")
+@limiter.limit("10/minute")
+async def api_add_geofence(request: Request):
+    body = await request.json()
+    return add_geofence(body)
+
+@app.delete("/api/geofences/{fence_id}")
+@limiter.limit("10/minute")
+async def api_remove_geofence(request: Request, fence_id: str):
+    return remove_geofence(fence_id)
+
+@app.get("/api/geofence-alerts")
+@limiter.limit("30/minute")
+async def api_geofence_alerts(request: Request):
+    d = get_latest_data()
+    return check_geofence_alerts(d)
+
+@app.get("/api/export/geojson")
+@limiter.limit("10/minute")
+async def api_export_geojson(request: Request, layers: str = Query(None, description="Comma-separated layer names")):
+    d = get_latest_data()
+    layer_list = [l.strip() for l in layers.split(",")] if layers else None
+    return export_geojson(d, layer_list)
+
+@app.get("/api/export/csv")
+@limiter.limit("10/minute")
+async def api_export_csv(request: Request, layer: str = Query(..., description="Layer name to export")):
+    d = get_latest_data()
+    csv_text = export_csv(d, layer)
+    if not csv_text:
+        return Response(content="No data for layer", status_code=404)
+    return Response(content=csv_text, media_type="text/csv",
+                    headers={"Content-Disposition": f"attachment; filename={layer}.csv"})
+
 from services.network_utils import fetch_with_curl
 
 @app.get("/api/route/{callsign}")

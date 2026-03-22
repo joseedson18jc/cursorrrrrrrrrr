@@ -16,6 +16,9 @@ import SettingsPanel from "@/components/SettingsPanel";
 import MapLegend from "@/components/MapLegend";
 import ScaleBar from "@/components/ScaleBar";
 import ErrorBoundary from "@/components/ErrorBoundary";
+import ThreatLevelBadge from "@/components/ThreatLevelBadge";
+import HeartbeatMonitor from "@/components/HeartbeatMonitor";
+import DataExportButton from "@/components/DataExportButton";
 import { DashboardDataProvider } from "@/lib/DashboardDataContext";
 import OnboardingModal, { useOnboarding } from "@/components/OnboardingModal";
 import ChangelogModal, { useChangelog } from "@/components/ChangelogModal";
@@ -262,9 +265,22 @@ export default function Dashboard() {
             </div>
           </motion.div>
 
+          {/* THREAT LEVEL BADGE */}
+          <motion.div
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: 0.5, duration: 0.8 }}
+            className="absolute top-6 left-[340px] z-[200] hud-zone"
+          >
+            <ErrorBoundary name="ThreatLevelBadge">
+              <ThreatLevelBadge />
+            </ErrorBoundary>
+          </motion.div>
+
           {/* SYSTEM METRICS TOP LEFT */}
-          <div className="absolute top-2 left-6 text-[8px] font-mono tracking-widest text-cyan-500/50 z-[200] pointer-events-none hud-zone">
-            OPTIC VIS:113  SRC:180  DENS:1.42  0.8ms
+          <div className="absolute top-2 left-6 text-[8px] font-mono tracking-widest text-cyan-500/50 z-[200] flex items-center gap-4 hud-zone">
+            <span className="pointer-events-none">OPTIC VIS:113  SRC:180  DENS:1.42  0.8ms</span>
+            <HeartbeatMonitor data={data} backendStatus={backendStatus} />
           </div>
 
           {/* SYSTEM METRICS TOP RIGHT */}
@@ -385,8 +401,11 @@ export default function Dashboard() {
             transition={{ delay: 1, duration: 1 }}
             className="absolute bottom-6 left-1/2 -translate-x-1/2 z-[200] pointer-events-auto flex flex-col items-center gap-2 hud-zone"
           >
-            {/* LOCATE BAR — search by coordinates or place name */}
-            <LocateBar onLocate={(lat, lng) => setFlyToLocation({ lat, lng, ts: Date.now() })} />
+            {/* LOCATE BAR + EXPORT — search by coordinates or place name */}
+            <div className="flex items-center gap-2">
+              <LocateBar onLocate={(lat, lng) => setFlyToLocation({ lat, lng, ts: Date.now() })} />
+              <DataExportButton />
+            </div>
 
             <div
               className="bg-[var(--bg-primary)]/60 backdrop-blur-md border border-[var(--border-primary)] rounded-xl px-6 py-2.5 flex items-center gap-6 shadow-[0_4px_30px_rgba(0,0,0,0.2)] border-b-2 border-b-cyan-900"

@@ -1,0 +1,47 @@
+[
+  {
+    "id": "strait-of-hormuz",
+    "name": "Strait of Hormuz",
+    "lat": 26.5,
+    "lng": 56.25,
+    "radius_km": 100,
+    "category": "chokepoint",
+    "color": "#ef4444"
+  },
+  {
+    "id": "taiwan-strait",
+    "name": "Taiwan Strait",
+    "lat": 24.0,
+    "lng": 119.5,
+    "radius_km": 150,
+    "category": "flashpoint",
+    "color": "#f97316"
+  },
+  {
+    "id": "suez-canal",
+    "name": "Suez Canal",
+    "lat": 30.5,
+    "lng": 32.3,
+    "radius_km": 50,
+    "category": "chokepoint",
+    "color": "#eab308"
+  },
+  {
+    "id": "black-sea",
+    "name": "Black Sea Zone",
+    "lat": 43.5,
+    "lng": 34.0,
+    "radius_km": 300,
+    "category": "conflict",
+    "color": "#ef4444"
+  },
+  {
+    "id": "south-china-sea",
+    "name": "South China Sea",
+    "lat": 15.0,
+    "lng": 115.0,
+    "radius_km": 500,
+    "category": "flashpoint",
+    "color": "#f97316"
+  }
+]
