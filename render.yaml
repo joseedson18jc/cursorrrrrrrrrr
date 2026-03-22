@@ -1,0 +1,23 @@
+services:
+  # ── Backend (FastAPI) ──────────────────────────────────────────────
+  - type: web
+    name: geoint-backend
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: free
+    envVars:
+      - key: CORS_ORIGINS
+        value: https://geoint-frontend.onrender.com
+    healthCheckPath: /api/health
+
+  # ── Frontend (Next.js) ─────────────────────────────────────────────
+  - type: web
+    name: geoint-frontend
+    runtime: docker
+    dockerfilePath: ./frontend/Dockerfile
+    dockerContext: ./frontend
+    plan: free
+    envVars:
+      - key: BACKEND_URL
+        value: https://geoint-backend.onrender.com
