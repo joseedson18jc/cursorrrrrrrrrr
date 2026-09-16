@@ -1,0 +1,40 @@
+# Slim image for Render / small cloud instances.
+#
+# Differences from ./Dockerfile (used by docker-compose):
+#   * No Playwright/Chromium install. The LiveUAmap scraper is the only
+#     consumer and it is disabled via LIVEUAMAP_ENABLED=0 on Render, because a
+#     headless Chromium does not fit in a 512 MB free instance and the browser
+#     download adds ~500 MB and several minutes to every build.
+#   * Binds to $PORT (Render injects PORT=10000) with a fallback of 8000.
+FROM python:3.11-slim-bookworm
+
+WORKDIR /app
+
+# curl: network fallback used by services/network_utils.py
+# nodejs: AIS WebSocket proxy (ais_proxy.js)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl ca-certificates \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY package*.json ./
+RUN npm ci --omit=dev
+
+COPY . .
+
+RUN adduser --system --uid 1001 backenduser \
+    && chown -R backenduser /app \
+    && chmod -R u+w /app
+USER backenduser
+
+ENV PYTHONUNBUFFERED=1 \
+    LIVEUAMAP_ENABLED=0
+
+EXPOSE 8000
+
+# Shell form so ${PORT} is expanded at runtime.
+CMD uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}

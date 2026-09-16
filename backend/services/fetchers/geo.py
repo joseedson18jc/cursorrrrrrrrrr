@@ -154,6 +154,12 @@ def fetch_geopolitics():
 
 
 def update_liveuamap():
+    import os
+    # Needs a headless Chromium (~300 MB RSS). Disabled on small cloud
+    # instances via LIVEUAMAP_ENABLED=0; enabled by default for docker-compose.
+    if os.environ.get("LIVEUAMAP_ENABLED", "1").strip().lower() in ("0", "false", "no"):
+        logger.debug("Liveuamap scraper disabled (LIVEUAMAP_ENABLED=0)")
+        return
     logger.info("Running scheduled Liveuamap scraper...")
     try:
         from services.liveuamap_scraper import fetch_liveuamap

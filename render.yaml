@@ -1,23 +1,54 @@
+# Render Blueprint — deploys the FastAPI backend and the Next.js frontend as
+# two free web services. One-click: https://render.com/deploy?repo=<this repo>
+#
+# Why the backend URL is hard-coded:
+#   * Free instances cannot RECEIVE private-network traffic, so the frontend
+#     must call the backend over its public URL.
+#   * Blueprint `fromService` only exposes host/port/hostport (private network),
+#     not the public RENDER_EXTERNAL_URL, so it cannot be used here.
+#   The service names below are deliberately distinctive to avoid Render
+#   appending a random suffix. If your dashboard shows a different backend
+#   URL, update BACKEND_URL on the frontend service to match.
 services:
   # ── Backend (FastAPI) ──────────────────────────────────────────────
   - type: web
-    name: geoint-backend
+    name: shadowbroker-geoint-api
     runtime: docker
-    dockerfilePath: ./backend/Dockerfile
+    dockerfilePath: ./backend/Dockerfile.render
     dockerContext: ./backend
     plan: free
+    region: oregon
+    healthCheckPath: /healthz
+    autoDeploy: true
     envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: LIVEUAMAP_ENABLED
+        value: "0"
       - key: CORS_ORIGINS
-        value: https://geoint-frontend.onrender.com
-    healthCheckPath: /api/health
+        value: https://shadowbroker-geoint-web.onrender.com
+      # Optional API keys — set in the Render dashboard (kept out of git).
+      - key: AIS_API_KEY
+        sync: false
+      - key: OPENSKY_CLIENT_ID
+        sync: false
+      - key: OPENSKY_CLIENT_SECRET
+        sync: false
+      - key: ADMIN_KEY
+        generateValue: true
 
   # ── Frontend (Next.js) ─────────────────────────────────────────────
   - type: web
-    name: geoint-frontend
+    name: shadowbroker-geoint-web
     runtime: docker
     dockerfilePath: ./frontend/Dockerfile
     dockerContext: ./frontend
     plan: free
+    region: oregon
+    healthCheckPath: /
+    autoDeploy: true
     envVars:
       - key: BACKEND_URL
-        value: https://geoint-backend.onrender.com
+        value: https://shadowbroker-geoint-api.onrender.com
+      - key: NEXT_TELEMETRY_DISABLED
+        value: "1"

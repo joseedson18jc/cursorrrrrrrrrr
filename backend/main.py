@@ -318,6 +318,13 @@ async def debug_latest_data(request: Request):
     return list(get_latest_data().keys())
 
 
+@app.get("/healthz", include_in_schema=False)
+async def healthz():
+    """Unthrottled liveness probe for platform health checks (Render, k8s).
+    /api/health is rate-limited per IP, which can trip aggressive probers."""
+    return {"status": "ok"}
+
+
 @app.get("/api/health", response_model=HealthResponse)
 @limiter.limit("30/minute")
 async def health_check(request: Request):
