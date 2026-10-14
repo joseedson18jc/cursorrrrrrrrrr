@@ -307,6 +307,10 @@ async def live_data_slow(request: Request,
         "datacenters": _f(d.get("datacenters", [])),
         "military_bases": _f(d.get("military_bases", [])),
         "power_plants": _f(d.get("power_plants", [])),
+        # Geofence zones + which military assets are currently inside them.
+        # Always sent (small set); the frontend draws the circles and labels.
+        "geofences": get_geofences(),
+        "geofence_alerts": check_geofence_alerts(d),
         "freshness": dict(source_timestamps),
     }
     bbox_tag = f"{s},{w},{n},{e}" if has_bbox else "full"

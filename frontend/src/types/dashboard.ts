@@ -251,6 +251,36 @@ export interface MilitaryBase {
   lng: number;
 }
 
+// ─── GEOFENCE ZONES ─────────────────────────────────────────────────────────
+
+export interface Geofence {
+  id: string;
+  name: string;
+  lat: number;
+  lng: number;
+  radius_km: number;
+  category?: string;
+  color?: string;
+}
+
+export interface GeofenceAlertEntity {
+  type: "military_flight" | "military_vessel";
+  id: string;
+  callsign?: string;
+  name?: string;
+  ship_type?: string;
+  country?: string;
+  distance_km: number;
+}
+
+export interface GeofenceAlert {
+  geofence_id: string;
+  geofence_name: string;
+  category?: string;
+  entity_count: number;
+  entities: GeofenceAlertEntity[];
+}
+
 // ─── NEWS / GLOBAL INCIDENTS ────────────────────────────────────────────────
 
 export interface NewsArticle {
@@ -433,6 +463,8 @@ export interface DashboardData {
   datacenters?: DataCenter[];
   military_bases?: MilitaryBase[];
   power_plants?: PowerPlant[];
+  geofences?: Geofence[];
+  geofence_alerts?: GeofenceAlert[];
 }
 
 // ─── COMPONENT PROPS ────────────────────────────────────────────────────────
@@ -463,6 +495,7 @@ export interface ActiveLayers {
   datacenters: boolean;
   military_bases: boolean;
   power_plants: boolean;
+  geofences: boolean;
 }
 
 export interface SelectedEntity {

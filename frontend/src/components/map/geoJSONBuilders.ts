@@ -2,7 +2,7 @@
 // Extracted from MaplibreViewer to reduce component size and enable unit testing.
 // Each function takes data arrays + optional helpers and returns a GeoJSON FeatureCollection or null.
 
-import type { Earthquake, GPSJammingZone, FireHotspot, InternetOutage, DataCenter, MilitaryBase, PowerPlant, GDELTIncident, LiveUAmapIncident, CCTVCamera, KiwiSDR, FrontlineGeoJSON, UAV, Satellite, Ship, ActiveLayers } from "@/types/dashboard";
+import type { Earthquake, GPSJammingZone, FireHotspot, InternetOutage, DataCenter, MilitaryBase, PowerPlant, GDELTIncident, LiveUAmapIncident, CCTVCamera, KiwiSDR, FrontlineGeoJSON, UAV, Satellite, Ship, ActiveLayers, Geofence, GeofenceAlert } from "@/types/dashboard";
 import { classifyAircraft } from "@/utils/aircraftClassification";
 import { MISSION_COLORS, MISSION_ICON_MAP } from "@/components/map/icons/SatelliteIcons";
 
@@ -28,6 +28,49 @@ export function buildEarthquakesGeoJSON(earthquakes?: Earthquake[]): FC {
                 geometry: { type: 'Point' as const, coordinates: [eq.lng, eq.lat] }
             };
         }).filter(Boolean) as GeoJSON.Feature[]
+    };
+}
+
+// ─── Geofence Zones ─────────────────────────────────────────────────────────
+
+/** Great-circle polygon approximating a circle of `radiusKm` around a point. */
+function circlePolygon(lat: number, lng: number, radiusKm: number, steps = 64): [number, number][] {
+    const R = 6371;
+    const latR = lat * Math.PI / 180, lngR = lng * Math.PI / 180, d = radiusKm / R;
+    const ring: [number, number][] = [];
+    for (let i = 0; i <= steps; i++) {
+        const brg = (i / steps) * 2 * Math.PI;
+        const lat2 = Math.asin(Math.sin(latR) * Math.cos(d) + Math.cos(latR) * Math.sin(d) * Math.cos(brg));
+        const lng2 = lngR + Math.atan2(Math.sin(brg) * Math.sin(d) * Math.cos(latR), Math.cos(d) - Math.sin(latR) * Math.sin(lat2));
+        ring.push([lng2 * 180 / Math.PI, lat2 * 180 / Math.PI]);
+    }
+    return ring;
+}
+
+export function buildGeofenceGeoJSON(zones?: Geofence[], alerts?: GeofenceAlert[]): FC {
+    if (!zones?.length) return null;
+    const alertCount: Record<string, number> = {};
+    for (const a of alerts || []) alertCount[a.geofence_id] = a.entity_count || a.entities?.length || 0;
+    return {
+        type: 'FeatureCollection',
+        features: zones.map(z => {
+            const inside = alertCount[z.id] || 0;
+            return {
+                type: 'Feature' as const,
+                properties: {
+                    id: z.id,
+                    name: z.name,
+                    category: z.category || 'custom',
+                    color: z.color || '#3b82f6',
+                    radius_km: z.radius_km,
+                    inside,
+                    label: inside > 0 ? `${z.name.toUpperCase()} · ${inside} INSIDE` : z.name.toUpperCase(),
+                    // Zones with assets inside glow brighter so they read as active alerts.
+                    opacity: inside > 0 ? 0.22 : 0.08,
+                },
+                geometry: { type: 'Polygon' as const, coordinates: [circlePolygon(z.lat, z.lng, z.radius_km)] }
+            };
+        })
     };
 }
 

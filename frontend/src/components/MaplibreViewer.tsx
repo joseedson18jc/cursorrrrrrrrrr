@@ -49,7 +49,7 @@ import { useInterpolation } from "@/components/map/hooks/useInterpolation";
 import { useClusterLabels } from "@/components/map/hooks/useClusterLabels";
 import { spreadAlertItems } from "@/utils/alertSpread";
 import {
-    buildEarthquakesGeoJSON, buildJammingGeoJSON, buildCctvGeoJSON, buildKiwisdrGeoJSON,
+    buildEarthquakesGeoJSON, buildJammingGeoJSON, buildGeofenceGeoJSON, buildCctvGeoJSON, buildKiwisdrGeoJSON,
     buildFirmsGeoJSON, buildInternetOutagesGeoJSON, buildDataCentersGeoJSON, buildPowerPlantsGeoJSON, buildMilitaryBasesGeoJSON,
     buildGdeltGeoJSON, buildLiveuaGeoJSON, buildFrontlineGeoJSON,
     buildFlightLayerGeoJSON, buildUavGeoJSON,
@@ -201,6 +201,10 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
     const jammingGeoJSON = useMemo(() =>
         activeLayers.gps_jamming ? buildJammingGeoJSON(data?.gps_jamming) : null,
         [activeLayers.gps_jamming, data?.gps_jamming]);
+
+    const geofenceGeoJSON = useMemo(() =>
+        activeLayers.geofences ? buildGeofenceGeoJSON(data?.geofences, data?.geofence_alerts) : null,
+        [activeLayers.geofences, data?.geofences, data?.geofence_alerts]);
 
     const cctvGeoJSON = useMemo(() =>
         activeLayers.cctv ? buildCctvGeoJSON(data?.cctv, inView) : null,
@@ -1188,6 +1192,51 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
                                 'icon-allow-overlap': true
                             }}
                             paint={{ 'icon-opacity': 1.0 }}
+                        />
+                    </Source>
+                )}
+
+                {/* Geofence Zones — colored circles; brighter when military assets are inside */}
+                {geofenceGeoJSON && (
+                    <Source id="geofences" type="geojson" data={geofenceGeoJSON as any}>
+                        <Layer
+                            id="geofences-fill"
+                            type="fill"
+                            paint={{
+                                'fill-color': ['get', 'color'],
+                                'fill-opacity': ['get', 'opacity']
+                            }}
+                        />
+                        <Layer
+                            id="geofences-outline"
+                            type="line"
+                            paint={{
+                                'line-color': ['get', 'color'],
+                                'line-width': ['case', ['>', ['get', 'inside'], 0], 2, 1.2],
+                                'line-opacity': 0.85,
+                                'line-dasharray': [3, 2]
+                            }}
+                        />
+                        <Layer
+                            id="geofences-label"
+                            type="symbol"
+                            layout={{
+                                'text-field': ['get', 'label'],
+                                'text-size': [
+                                    'interpolate', ['linear'], ['zoom'],
+                                    2, 8,
+                                    5, 10,
+                                    8, 12
+                                ],
+                                'text-letter-spacing': 0.1,
+                                'text-allow-overlap': false,
+                                'text-ignore-placement': false
+                            }}
+                            paint={{
+                                'text-color': ['get', 'color'],
+                                'text-halo-color': '#000000',
+                                'text-halo-width': 1.5
+                            }}
                         />
                     </Source>
                 )}
