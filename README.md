@@ -180,7 +180,8 @@ helm install shadowbroker ./helm/chart --create-namespace --namespace shadowbrok
 
 ### 🚢 Maritime Tracking
 
-* **AIS Vessel Stream** — 25,000+ vessels via aisstream.io WebSocket (real-time)
+* **AIS Vessel Stream** — 25,000+ vessels via aisstream.io WebSocket (real-time, needs `AIS_API_KEY`)
+* **Keyless Baltic AIS** — ~1,000 vessels from Fintraffic Digitraffic open data, on by default, no key
 * **Ship Classification** — Cargo, tanker, passenger, yacht, military vessel types with color-coded icons
 * **Carrier Strike Group Tracker** — All 11 active US Navy aircraft carriers with OSINT-estimated positions
   * Automated GDELT news scraping for carrier movement intelligence
@@ -628,13 +629,14 @@ live-risk-dashboard/
 ### Backend (`backend/.env`)
 
 ```env
-# Required
-AIS_API_KEY=your_aisstream_key                # Maritime vessel tracking (aisstream.io)
-
-# Optional (enhances data quality)
-OPENSKY_CLIENT_ID=your_opensky_client_id      # OAuth2 — higher rate limits for flight data
+# No key is required. Everything below is optional.
+AIS_API_KEY=your_aisstream_key                # Global ships via aisstream.io. Without it, ships come
+                                              # from the keyless Digitraffic feed (Baltic, ~1,000 vessels)
+DIGITRAFFIC_AIS_ENABLED=1                     # 0 disables the keyless Baltic ship feed
+OPENSKY_CLIENT_ID=your_opensky_client_id      # OAuth2 — gap-fill flights over Africa/Asia/LatAm
 OPENSKY_CLIENT_SECRET=your_opensky_secret     # OAuth2 — paired with Client ID above
-LTA_ACCOUNT_KEY=your_lta_key                  # Singapore CCTV cameras
+# LTA_ACCOUNT_KEY is no longer needed — Singapore cameras use keyless data.gov.sg
+# The basemap (Esri Canvas) needs no key either.
 
 # Outbound identification & footprint
 OPERATOR_HANDLE=your-github-handle            # User-Agent sent to adsb.lol, Nominatim, etc.

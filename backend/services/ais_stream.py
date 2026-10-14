@@ -270,6 +270,13 @@ def _ais_stream_loop():
     import subprocess
     import os
 
+    if not API_KEY:
+        # Without a key aisstream.io rejects the socket and the Node proxy would
+        # crash-loop forever. Keyless Digitraffic still supplies Baltic ships.
+        logger.info("AIS_API_KEY not set — skipping aisstream.io global stream "
+                    "(keyless Digitraffic Baltic feed remains active)")
+        return
+
     proxy_script = os.path.join(os.path.dirname(os.path.dirname(__file__)), "ais_proxy.js")
     backoff = 1  # Exponential backoff starting at 1 second
 
@@ -395,6 +402,122 @@ def _ais_stream_loop():
             continue
 
 
+# ---------------------------------------------------------------------------
+# Keyless supplemental AIS: Fintraffic Digitraffic (Finland, open data)
+# ---------------------------------------------------------------------------
+# https://www.digitraffic.fi/en/marine-traffic/ — free, no API key, CC BY 4.0.
+# Covers the Baltic Sea / Gulf of Finland (~1,000 vessels). Runs regardless of
+# AIS_API_KEY, so a fresh install shows live ships with zero configuration.
+# Disable with DIGITRAFFIC_AIS_ENABLED=0.
+DIGITRAFFIC_LOCATIONS = "https://meri.digitraffic.fi/api/ais/v1/locations"
+DIGITRAFFIC_VESSELS = "https://meri.digitraffic.fi/api/ais/v1/vessels"
+_DIGITRAFFIC_POS_INTERVAL = 60       # positions refresh
+_DIGITRAFFIC_META_INTERVAL = 900     # names / ship types refresh
+_digitraffic_thread: threading.Thread | None = None
+
+
+def _digitraffic_enabled() -> bool:
+    return os.environ.get("DIGITRAFFIC_AIS_ENABLED", "1").strip().lower() not in ("0", "false", "no")
+
+
+def _ingest_digitraffic_metadata(vessels: list[dict]) -> int:
+    n = 0
+    with _vessels_lock:
+        for v in vessels:
+            mmsi = v.get("mmsi")
+            if not isinstance(mmsi, int):
+                continue
+            vessel = _vessels.setdefault(mmsi, {"mmsi": mmsi})
+            if v.get("name"):
+                vessel["name"] = str(v["name"]).strip()
+            if v.get("callSign"):
+                vessel["callsign"] = str(v["callSign"]).strip()
+            if v.get("imo"):
+                vessel["imo"] = v["imo"]
+            if v.get("destination"):
+                vessel["destination"] = str(v["destination"]).strip().replace("@", "")
+            st = v.get("shipType") or 0
+            if st:
+                vessel["ais_type_code"] = st
+                vessel["type"] = classify_vessel(st, mmsi)
+            vessel.setdefault("country", get_country_from_mmsi(mmsi))
+            vessel.setdefault("source", "digitraffic")
+            n += 1
+    return n
+
+
+def _ingest_digitraffic_locations(features: list[dict]) -> int:
+    n = 0
+    with _vessels_lock:
+        for f in features:
+            props = f.get("properties") or {}
+            mmsi = props.get("mmsi") or f.get("mmsi")
+            coords = (f.get("geometry") or {}).get("coordinates") or []
+            if not isinstance(mmsi, int) or len(coords) != 2:
+                continue
+            lng, lat = coords
+            if lat is None or lng is None or abs(lat) > 90 or abs(lng) > 180:
+                continue
+            # Use the report's own time so get_ais_vessels() prunes stale ones.
+            ts_ms = props.get("timestampExternal")
+            updated = ts_ms / 1000.0 if isinstance(ts_ms, (int, float)) else time.time()
+            vessel = _vessels.setdefault(mmsi, {"mmsi": mmsi})
+            # Never overwrite a fresher position from aisstream / AIS-catcher.
+            if vessel.get("_updated", 0) > updated:
+                continue
+            vessel["lat"], vessel["lng"] = lat, lng
+            vessel["sog"] = props.get("sog") or 0
+            vessel["cog"] = props.get("cog") or 0
+            hdg = props.get("heading")
+            vessel["heading"] = hdg if isinstance(hdg, (int, float)) and hdg != 511 else vessel["cog"]
+            vessel["_updated"] = updated
+            vessel.setdefault("type", "unknown")
+            vessel.setdefault("name", "UNKNOWN")
+            vessel.setdefault("country", get_country_from_mmsi(mmsi))
+            vessel.setdefault("source", "digitraffic")
+            n += 1
+    return n
+
+
+def _digitraffic_loop():
+    from services.network_utils import fetch_with_curl, outbound_user_agent
+    # Digitraffic asks clients to identify themselves via this header.
+    headers = {"Digitraffic-User": outbound_user_agent("digitraffic-ais"), "Accept-Encoding": "gzip"}
+    last_meta = 0.0
+    while _ws_running:
+        try:
+            if time.time() - last_meta > _DIGITRAFFIC_META_INTERVAL:
+                r = fetch_with_curl(DIGITRAFFIC_VESSELS, timeout=30, headers=headers)
+                if r.status_code == 200:
+                    m = _ingest_digitraffic_metadata(r.json())
+                    last_meta = time.time()
+                    logger.info(f"Digitraffic AIS: metadata for {m} vessels")
+            r = fetch_with_curl(DIGITRAFFIC_LOCATIONS, timeout=30, headers=headers)
+            if r.status_code == 200:
+                n = _ingest_digitraffic_locations(r.json().get("features", []))
+                logger.info(f"Digitraffic AIS: {n} positions ingested")
+            else:
+                logger.warning(f"Digitraffic AIS locations HTTP {r.status_code}")
+        except Exception as e:  # never let the supplemental feed kill the thread
+            logger.warning(f"Digitraffic AIS fetch failed: {e}")
+        for _ in range(_DIGITRAFFIC_POS_INTERVAL):
+            if not _ws_running:
+                break
+            time.sleep(1)
+
+
+def _start_digitraffic():
+    global _digitraffic_thread
+    if not _digitraffic_enabled():
+        logger.info("Digitraffic AIS disabled (DIGITRAFFIC_AIS_ENABLED=0)")
+        return
+    if _digitraffic_thread and _digitraffic_thread.is_alive():
+        return
+    _digitraffic_thread = threading.Thread(target=_digitraffic_loop, daemon=True, name="digitraffic-ais")
+    _digitraffic_thread.start()
+    logger.info("Digitraffic AIS (keyless, Baltic) thread started")
+
+
 def _run_ais_loop():
     """Thread target: run the AIS loop."""
     try:
@@ -417,6 +540,9 @@ def start_ais_stream():
     _ws_thread = threading.Thread(target=_run_ais_loop, daemon=True, name="ais-stream")
     _ws_thread.start()
     logger.info("AIS Stream background thread started")
+
+    # Keyless supplemental feed — works with or without AIS_API_KEY.
+    _start_digitraffic()
 
 
 def stop_ais_stream():

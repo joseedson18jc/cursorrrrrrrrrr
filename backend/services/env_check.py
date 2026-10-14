@@ -19,10 +19,11 @@ _CRITICAL_WARN = {
 }
 
 _OPTIONAL = {
-    "AIS_API_KEY": "AIS vessel streaming (ships layer will be empty without it)",
+    "AIS_API_KEY": "aisstream.io global vessel stream (without it, ships come only from the keyless Digitraffic Baltic feed)",
     "OPENSKY_CLIENT_ID": "OpenSky OAuth2 — gap-fill flights in Africa/Asia/LatAm",
     "OPENSKY_CLIENT_SECRET": "OpenSky OAuth2 — gap-fill flights in Africa/Asia/LatAm",
-    "LTA_ACCOUNT_KEY": "Singapore LTA traffic cameras (CCTV layer)",
+    # LTA_ACCOUNT_KEY intentionally not listed: the Singapore camera ingestor
+    # uses the keyless data.gov.sg traffic-images endpoint.
 }
 
 
