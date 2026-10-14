@@ -27,7 +27,8 @@ def _geocode_region(region_name: str, country_name: str) -> tuple:
         import urllib.parse
         query = urllib.parse.quote(f"{region_name}, {country_name}")
         url = f"https://nominatim.openstreetmap.org/search?q={query}&format=json&limit=1"
-        response = fetch_with_curl(url, timeout=8, headers={"User-Agent": "ShadowBroker-OSINT/1.0"})
+        # Default User-Agent is the per-install operator handle (network_utils).
+        response = fetch_with_curl(url, timeout=8)
         if response.status_code == 200:
             results = response.json()
             if results:

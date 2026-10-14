@@ -1,10 +1,13 @@
 import logging
 import json
+import os
 import subprocess
 import shutil
 import time
 import threading
+import uuid
 import requests
+from pathlib import Path
 from urllib.parse import urlparse
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -34,6 +37,108 @@ _CIRCUIT_BREAKER_TTL = 120  # 2 minutes
 # Lock protecting _domain_fail_cache and _circuit_breaker mutations
 _cb_lock = threading.Lock()
 
+# ---------------------------------------------------------------------------
+# Per-operator outbound identification
+# ---------------------------------------------------------------------------
+#
+# Ported from upstream ShadowBroker (issues #289 / #290 / #291). Every
+# third-party API this backend calls used to identify itself with one shared
+# "ShadowBroker-OSINT" User-Agent, so from an upstream's perspective every
+# install in the world looked like a single entity. adsb.lol now answers
+# HTTP 403 to any User-Agent containing "shadowbroker", which silently empties
+# the flights layer on every install.
+#
+# Fix: each install identifies with its own stable pseudonymous handle as the
+# entire User-Agent product token. Upstreams see "operator-7f3a92" (or the
+# configured OPERATOR_HANDLE), so a misbehaving operator can be rate-limited
+# or blocked individually without taking down everyone else.
+#
+# - Auto-generated on first use when OPERATOR_HANDLE is unset.
+# - Persisted to backend/data/operator_handle.json across restarts (ephemeral
+#   hosts simply regenerate one per instance).
+# - Override with OPERATOR_HANDLE (e.g. your GitHub handle) for traceability,
+#   or SHADOWBROKER_USER_AGENT to replace the whole string.
+
+_OPERATOR_HANDLE_FILE = Path(__file__).parent.parent / "data" / "operator_handle.json"
+_OPERATOR_HANDLE_CACHE: str = ""
+_OPERATOR_HANDLE_LOCK = threading.Lock()
+
+
+def _normalize_handle(raw: str) -> str:
+    """Strip whitespace, lowercase, replace header-unsafe chars with dashes."""
+    safe = "".join(ch if (ch.isalnum() or ch in "-_") else "-" for ch in raw.strip().lower())
+    while "--" in safe:
+        safe = safe.replace("--", "-")
+    safe = safe.strip("-")
+    return safe[:48] if safe else "anonymous"
+
+
+def _generate_operator_handle() -> str:
+    """``operator-7f3a92`` — neutral prefix plus 6 hex chars of a fresh uuid4."""
+    return f"operator-{uuid.uuid4().hex[:6]}"
+
+
+def _load_persisted_operator_handle() -> str:
+    try:
+        if _OPERATOR_HANDLE_FILE.exists():
+            data = json.loads(_OPERATOR_HANDLE_FILE.read_text(encoding="utf-8"))
+            return str(data.get("handle", "") or "").strip()
+    except (OSError, json.JSONDecodeError, ValueError):
+        pass
+    return ""
+
+
+def _persist_operator_handle(handle: str) -> None:
+    """Atomic save; failure is non-fatal (we just regenerate next restart)."""
+    try:
+        _OPERATOR_HANDLE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = _OPERATOR_HANDLE_FILE.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps({
+            "handle": handle,
+            "_meta": {
+                "purpose": "Per-install operator handle for outbound third-party API attribution.",
+                "see": "backend/services/network_utils.py:outbound_user_agent",
+            },
+        }, indent=2), encoding="utf-8")
+        os.replace(tmp, _OPERATOR_HANDLE_FILE)
+    except OSError as exc:
+        logger.debug("Could not persist operator_handle (continuing in-memory): %s", exc)
+
+
+def get_operator_handle() -> str:
+    """Resolution order: OPERATOR_HANDLE env → process cache → disk → fresh."""
+    global _OPERATOR_HANDLE_CACHE
+    with _OPERATOR_HANDLE_LOCK:
+        configured = (os.environ.get("OPERATOR_HANDLE") or "").strip()
+        if configured:
+            return _normalize_handle(configured)
+        if _OPERATOR_HANDLE_CACHE:
+            return _OPERATOR_HANDLE_CACHE
+        persisted = _load_persisted_operator_handle()
+        if persisted:
+            _OPERATOR_HANDLE_CACHE = _normalize_handle(persisted)
+            return _OPERATOR_HANDLE_CACHE
+        fresh = _generate_operator_handle()
+        _persist_operator_handle(fresh)
+        _OPERATOR_HANDLE_CACHE = fresh
+        return fresh
+
+
+def outbound_user_agent(purpose: str = "") -> str:
+    """User-Agent for an outbound third-party request: the handle only, e.g.
+    ``operator-7f3a92`` or ``operator-7f3a92 (purpose: wikipedia)``."""
+    handle = get_operator_handle()
+    if purpose:
+        return f"{handle} (purpose: {_normalize_handle(purpose)})"
+    return handle
+
+
+def default_user_agent() -> str:
+    """Default for ``fetch_with_curl``; SHADOWBROKER_USER_AGENT overrides all."""
+    custom = (os.environ.get("SHADOWBROKER_USER_AGENT") or "").strip()
+    return custom if custom else outbound_user_agent()
+
+
 class _DummyResponse:
     """Minimal response object matching requests.Response interface."""
     def __init__(self, status_code, text):
@@ -57,7 +162,7 @@ def fetch_with_curl(url, method="GET", json_data=None, timeout=15, headers=None)
     both Python requests and the barebones Windows system curl.
     """
     default_headers = {
-        "User-Agent": "ShadowBroker-OSINT/1.0 (live-risk-dashboard)",
+        "User-Agent": default_user_agent(),
     }
     if headers:
         default_headers.update(headers)

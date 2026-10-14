@@ -4,7 +4,7 @@ import concurrent.futures
 from urllib.parse import quote
 import requests as _requests
 from cachetools import TTLCache
-from services.network_utils import fetch_with_curl
+from services.network_utils import fetch_with_curl, outbound_user_agent
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,9 @@ def _reverse_geocode(lat: float, lng: float) -> dict:
         f"https://nominatim.openstreetmap.org/reverse?"
         f"lat={lat}&lon={lng}&format=json&zoom=10&addressdetails=1&accept-language=en"
     )
-    headers = {"User-Agent": "ShadowBroker-OSINT/1.0 (live-risk-dashboard; contact@shadowbroker.app)"}
+    # Per-install handle (see network_utils.outbound_user_agent); Nominatim's
+    # usage policy requires an identifying User-Agent, which the handle provides.
+    headers = {"User-Agent": outbound_user_agent("nominatim-reverse")}
 
     for attempt in range(2):
         # Enforce Nominatim's 1 req/sec policy
