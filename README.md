@@ -240,6 +240,14 @@ helm install shadowbroker ./helm/chart --create-namespace --namespace shadowbrok
   * Red overlay squares with "GPS JAM XX%" severity labels
 * **Radio Intercept Panel** — Scanner-style UI for monitoring communications
 
+### 🎯 Command & Analysis
+
+* **THREATCON Badge** — Global threat level (1 NOMINAL → 5 CRITICAL) computed every 30s from military flight density, M5+ earthquakes, GPS-jamming zones, GDELT conflict events, fire hotspots and internet outages. Click to expand the per-signal breakdown. API: `GET /api/threat-level`.
+* **Geofence Zones** — Named circular watch zones (Strait of Hormuz, Taiwan Strait, Suez Canal, Black Sea, South China Sea by default) drawn on the map and labelled `<ZONE> · N INSIDE` whenever military aircraft or vessels are within them. Add/remove zones via `POST /api/geofences` and `DELETE /api/geofences/{id}`; live hits via `GET /api/geofence-alerts`. Persisted to `backend/data/geofences.json`.
+* **Data Export** — EXPORT button next to LOCATE downloads any combination of layers as GeoJSON (one FeatureCollection) or CSV (one file per layer). API: `GET /api/export/geojson?layers=…`, `GET /api/export/csv?layer=…`.
+* **Heartbeat Monitor** — Per-source freshness dots in the top HUD (green fresh, yellow stale, grey no data) with an active/total count.
+* **Upstream Probe** — `GET /api/health/upstreams` reports what each flight-data provider returns *from the serving host* (status, latency, aircraft count). Use it first when the flights layer is unexpectedly empty: aggregators commonly block or throttle cloud egress and certain User-Agents.
+
 ### 🔥 Environmental & Infrastructure Monitoring
 
 * **NASA FIRMS Fire Hotspots (24h)** — 5,000+ global thermal anomalies from NOAA-20 VIIRS satellite, updated every cycle. Flame-shaped icons color-coded by fire radiative power (FRP): yellow (low), orange, red, dark red (intense). Clustered at low zoom with fire-shaped cluster markers.
@@ -334,6 +342,23 @@ helm install shadowbroker ./helm/chart --create-namespace --namespace shadowbrok
 ---
 
 ## 🚀 Getting Started
+
+### ☁️ Cloud Deploy (Vercel or Render)
+
+The backend is a long-lived process (scheduler, AIS WebSocket, in-memory store), so it must run as a **container**, not a serverless function. Both paths below do that.
+
+**Vercel** — two projects from this repo:
+
+| Project | Root directory | Framework | Notes |
+|---|---|---|---|
+| `…-api` | `backend` | Container (auto-detected from `backend/Dockerfile.vercel`) | Set `OPERATOR_HANDLE`, optionally `AIS_API_KEY` / OpenSky keys |
+| `…-web` | `frontend` | Next.js | Set `BACKEND_URL` to the API project's URL |
+
+The container is paused when idle; the first visit after a quiet spell shows an empty map for ~30s while the fetchers refill.
+
+**Render** — one click, both services: `https://render.com/deploy?repo=<your fork URL>`. Reads `render.yaml`; uses `backend/Dockerfile.render`. Free instances have 512 MB RAM and no persistent disk; upgrade the API service if you see out-of-memory restarts.
+
+Both cloud images skip Playwright/Chromium (`LIVEUAMAP_ENABLED=0`); the Docker Compose image keeps it.
 
 ### 🐳 Docker / Podman Setup (Recommended for Self-Hosting)
 
@@ -522,6 +547,7 @@ All layers are independently toggleable from the left panel:
 | Ukraine Frontline | ✅ ON | Live warfront positions |
 | Global Incidents | ✅ ON | GDELT conflict events |
 | GPS Jamming | ✅ ON | NAC-P degradation zones |
+| Geofence Zones | ✅ ON | Watch zones with live military asset-inside alerts |
 | MODIS Terra (Daily) | ❌ OFF | NASA GIBS daily satellite imagery |
 | High-Res Satellite | ❌ OFF | Esri sub-meter satellite imagery |
 | KiwiSDR Receivers | ❌ OFF | Public SDR radio receivers |
@@ -609,6 +635,14 @@ AIS_API_KEY=your_aisstream_key                # Maritime vessel tracking (aisstr
 OPENSKY_CLIENT_ID=your_opensky_client_id      # OAuth2 — higher rate limits for flight data
 OPENSKY_CLIENT_SECRET=your_opensky_secret     # OAuth2 — paired with Client ID above
 LTA_ACCOUNT_KEY=your_lta_key                  # Singapore CCTV cameras
+
+# Outbound identification & footprint
+OPERATOR_HANDLE=your-github-handle            # User-Agent sent to adsb.lol, Nominatim, etc.
+                                              # Auto-generated as "operator-xxxxxx" if unset.
+                                              # Each install must identify itself individually:
+                                              # the old shared "ShadowBroker" agent is blocked by adsb.lol.
+LIVEUAMAP_ENABLED=1                           # 0 disables the headless-Chromium scraper (small hosts)
+ADMIN_KEY=change-me                           # Protects settings & update endpoints in production
 ```
 
 ### Frontend
