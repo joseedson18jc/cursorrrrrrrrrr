@@ -540,7 +540,7 @@ All layers are independently toggleable from the left panel:
 | Tracked Aircraft | ✅ ON | Special interest watch list |
 | Satellites | ✅ ON | Orbital assets by mission type |
 | Carriers / Mil / Cargo | ✅ ON | Navy carriers, cargo ships, tankers |
-| Civilian Vessels | ❌ OFF | Yachts, fishing, recreational |
+| Civilian Vessels | ✅ ON | Yachts, fishing, recreational, and ships whose type isn't broadcast yet |
 | Cruise / Passenger | ✅ ON | Cruise ships and ferries |
 | Tracked Yachts | ✅ ON | Billionaire & oligarch superyachts (Yacht-Alert DB) |
 | Earthquakes (24h) | ✅ ON | USGS seismic events |

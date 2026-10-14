@@ -150,7 +150,7 @@ export default function Dashboard() {
     satellites: true,
     ships_military: true,
     ships_cargo: true,
-    ships_civilian: false,
+    ships_civilian: true,
     ships_passenger: true,
     ships_tracked_yachts: true,
     earthquakes: true,
