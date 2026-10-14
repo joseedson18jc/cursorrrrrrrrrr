@@ -325,6 +325,58 @@ async def healthz():
     return {"status": "ok"}
 
 
+# Fixed allow-list — this endpoint must never fetch caller-supplied URLs.
+_UPSTREAM_PROBES = {
+    "adsb_lol_region": "https://api.adsb.lol/v2/lat/40/lon/-74/dist/250",
+    "adsb_lol_mil": "https://api.adsb.lol/v2/mil",
+    "adsb_fi_region": "https://opendata.adsb.fi/api/v3/lat/40/lon/-74/dist/250",
+    "airplanes_live_region": "https://api.airplanes.live/v2/point/40/-74/250",
+    "opensky_anon_bbox": "https://opensky-network.org/api/states/all?lamin=40&lomin=-75&lamax=41&lomax=-73",
+}
+
+
+@app.get("/api/health/upstreams")
+@limiter.limit("6/minute")
+def api_health_upstreams(request: Request):
+    """Reachability of the flight data upstreams *from this host*.
+
+    ADS-B aggregators commonly block or rate-limit cloud egress IPs, which
+    shows up as an empty flights layer with no other symptom. This runs the
+    same fetch helper the real fetchers use, so the result reflects exactly
+    what they see. Sync def so FastAPI runs it in a threadpool.
+    """
+    import time as _t
+    import concurrent.futures as _cf
+
+    def _probe(item):
+        name, url = item
+        t0 = _t.time()
+        try:
+            res = fetch_with_curl(url, timeout=12)
+            body = res.text or ""
+            count = None
+            if res.status_code == 200:
+                try:
+                    j = res.json()
+                    count = len(j.get("ac") or j.get("states") or [])
+                except Exception:
+                    count = None
+            return name, {
+                "status": res.status_code,
+                "bytes": len(body),
+                "ms": round((_t.time() - t0) * 1000),
+                "aircraft": count,
+                "snippet": None if res.status_code == 200 else body[:160],
+            }
+        except Exception as e:
+            return name, {"status": None, "error": str(e)[:200],
+                          "ms": round((_t.time() - t0) * 1000)}
+
+    with _cf.ThreadPoolExecutor(max_workers=len(_UPSTREAM_PROBES)) as pool:
+        results = dict(pool.map(_probe, _UPSTREAM_PROBES.items()))
+    return {"host_hint": socket.gethostname(), "probes": results}
+
+
 @app.get("/api/health", response_model=HealthResponse)
 @limiter.limit("30/minute")
 async def health_check(request: Request):
