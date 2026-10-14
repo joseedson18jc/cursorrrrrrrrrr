@@ -116,3 +116,6 @@ ROADMAP.md
 UPDATEPROTOCOL.md
 CLAUDE.md
 DOCKER_SECRETS.md
+
+# Per-install outbound User-Agent handle (generated at runtime, never shared)
+backend/data/operator_handle.json
