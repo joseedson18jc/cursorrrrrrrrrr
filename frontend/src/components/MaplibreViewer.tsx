@@ -237,6 +237,8 @@ const MaplibreViewer = ({ data, activeLayers, onEntityClick, flyToLocation, sele
     // Load Images into the Map Style once loaded
     const onMapLoad = useCallback((e: any) => {
         const map = e.target;
+        // Debug/test hook: lets browser automation inspect layers and rendered features.
+        (window as any).__shadowbrokerMap = map;
 
         // Track which images are still loading so we can retry on styleimagemissing
         const pendingImages: Record<string, string> = {};
