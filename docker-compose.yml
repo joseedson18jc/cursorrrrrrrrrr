@@ -12,6 +12,11 @@ services:
       - LTA_ACCOUNT_KEY=${LTA_ACCOUNT_KEY}
       # Override allowed CORS origins (comma-separated). Auto-detects LAN IPs if empty.
       - CORS_ORIGINS=${CORS_ORIGINS:-}
+      # Outbound User-Agent handle for third-party APIs (adsb.lol, Nominatim...).
+      # Empty = auto-generate "operator-xxxxxx" and persist it in backend_data.
+      - OPERATOR_HANDLE=${OPERATOR_HANDLE:-}
+      # LiveUAmap scraper needs headless Chromium (~300 MB RSS); 0 disables it.
+      - LIVEUAMAP_ENABLED=${LIVEUAMAP_ENABLED:-1}
     volumes:
       - backend_data:/app/data
     restart: unless-stopped

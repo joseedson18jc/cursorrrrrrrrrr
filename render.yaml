@@ -27,6 +27,12 @@ services:
         value: "0"
       - key: CORS_ORIGINS
         value: https://shadowbroker-geoint-web.onrender.com
+      # Outbound User-Agent handle for third-party APIs (adsb.lol etc.).
+      # Free instances have no persistent disk, so set this to your GitHub
+      # handle in the dashboard; otherwise a new "operator-xxxxxx" is
+      # generated on every restart.
+      - key: OPERATOR_HANDLE
+        sync: false
       # Optional API keys — set in the Render dashboard (kept out of git).
       - key: AIS_API_KEY
         sync: false
