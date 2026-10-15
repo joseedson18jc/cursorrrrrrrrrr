@@ -119,6 +119,12 @@ def get_operator_handle() -> str:
             _OPERATOR_HANDLE_CACHE = _normalize_handle(persisted)
             return _OPERATOR_HANDLE_CACHE
         fresh = _generate_operator_handle()
+        logger.warning(
+            "OPERATOR_HANDLE is not set; using auto-generated %s. adsb.lol currently "
+            "refuses auto-generated handles (HTTP 403), so the flights layer will be "
+            "empty. Set OPERATOR_HANDLE to your GitHub handle or organisation name.",
+            fresh,
+        )
         _persist_operator_handle(fresh)
         _OPERATOR_HANDLE_CACHE = fresh
         return fresh

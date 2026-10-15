@@ -1,22 +1,24 @@
-# Render Blueprint — deploys the FastAPI backend and the Next.js frontend as
-# two free web services. One-click: https://render.com/deploy?repo=<this repo>
+# Render Blueprint — deploys the FastAPI backend as one web service.
+# One-click: https://render.com/deploy?repo=<this repo>
 #
-# Why the backend URL is hard-coded:
-#   * Free instances cannot RECEIVE private-network traffic, so the frontend
-#     must call the backend over its public URL.
-#   * Blueprint `fromService` only exposes host/port/hostport (private network),
-#     not the public RENDER_EXTERNAL_URL, so it cannot be used here.
-#   The service names below are deliberately distinctive to avoid Render
-#   appending a random suffix. If your dashboard shows a different backend
-#   URL, update BACKEND_URL on the frontend service to match.
+# The dashboard (Next.js) is hosted on Vercel and reaches this backend through
+# its BACKEND_URL setting (https://shadowbroker-geoint-api.onrender.com), so
+# no frontend service is defined here. Earlier versions of this file also
+# created "shadowbroker-geoint-web"; Render does not delete services removed
+# from a Blueprint, so delete that one by hand if it still exists.
+#
+# Sizing: the backend holds every flight, ship and satellite in memory.
+#   * Without AIS_API_KEY (Baltic ships only): ~500 MB — fits, barely, in 512 MB.
+#   * With AIS_API_KEY (global ships):        ~610 MB and growing — needs the
+#     "standard" plan (2 GB). Free and starter (512 MB) will be OOM-killed.
+#   Free instances also sleep after 15 minutes without traffic.
 services:
-  # ── Backend (FastAPI) ──────────────────────────────────────────────
   - type: web
     name: shadowbroker-geoint-api
     runtime: docker
     dockerfilePath: ./backend/Dockerfile.render
     dockerContext: ./backend
-    plan: free
+    plan: free          # change to "standard" before adding AIS_API_KEY
     region: oregon
     healthCheckPath: /healthz
     autoDeploy: true
@@ -25,15 +27,12 @@ services:
         value: "1"
       - key: LIVEUAMAP_ENABLED
         value: "0"
-      - key: CORS_ORIGINS
-        value: https://shadowbroker-geoint-web.onrender.com
-      # Outbound User-Agent handle for third-party APIs (adsb.lol etc.).
-      # Free instances have no persistent disk, so set this to your GitHub
-      # handle in the dashboard; otherwise a new "operator-xxxxxx" is
-      # generated on every restart.
+      # User-Agent sent to adsb.lol, Nominatim, etc. adsb.lol refuses the
+      # project name and the auto-generated "operator-xxxxxx" handles, so
+      # without a real handle the flights layer stays empty. Not a secret.
       - key: OPERATOR_HANDLE
-        sync: false
-      # Optional API keys — set in the Render dashboard (kept out of git).
+        value: joseedson18jc
+      # Secrets — set in the Render dashboard, never in git.
       - key: AIS_API_KEY
         sync: false
       - key: OPENSKY_CLIENT_ID
@@ -42,19 +41,3 @@ services:
         sync: false
       - key: ADMIN_KEY
         generateValue: true
-
-  # ── Frontend (Next.js) ─────────────────────────────────────────────
-  - type: web
-    name: shadowbroker-geoint-web
-    runtime: docker
-    dockerfilePath: ./frontend/Dockerfile
-    dockerContext: ./frontend
-    plan: free
-    region: oregon
-    healthCheckPath: /
-    autoDeploy: true
-    envVars:
-      - key: BACKEND_URL
-        value: https://shadowbroker-geoint-api.onrender.com
-      - key: NEXT_TELEMETRY_DISABLED
-        value: "1"
