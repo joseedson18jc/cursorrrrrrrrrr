@@ -585,6 +585,9 @@ _REGION_RETRIES = 2                 # extra attempts after the first
 _REGION_STALE_MAX_AGE = 240         # seconds a cached region may stand in for a failed one
 _region_cache: dict = {}            # (lat, lon) -> (fetched_at, aircraft list)
 _region_cache_lock = threading.Lock()
+_GAP_FILL_ROUNDS = 2                # extra passes for regions that came back empty
+_GAP_FILL_DELAY = 8                 # seconds between passes
+_GAP_FILL_BUDGET = 35               # skip gap-fill if the first pass already took this long
 _region_status: dict = {}           # "lat,lon" -> last outcome, for /api/health/upstreams
 
 
@@ -657,13 +660,27 @@ def _fetch_adsb_lol_regions():
             return cached[1]
         return []
 
-    all_flights = []
+    started = time.time()
     # Three at a time: six simultaneous multi-megabyte requests from shared cloud
     # egress addresses is what draws adsb.lol's HTTP 429 rate limit.
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
-        results = pool.map(_fetch_region, regions)
-    for region_flights in results:
-        all_flights.extend(region_flights)
+        results = list(pool.map(_fetch_region, regions))
+    per_region = {(r["lat"], r["lon"]): ac for r, ac in zip(regions, results)}
+
+    # Gap fill: a region with no data at all (failed, and no recent cache — i.e.
+    # a freshly started instance) would otherwise stay empty until the next
+    # 60 s cycle. Ask for just those regions again after a short pause.
+    for _ in range(_GAP_FILL_ROUNDS):
+        missing = [r for r in regions if not per_region[(r["lat"], r["lon"])]]
+        if not missing or time.time() - started > _GAP_FILL_BUDGET:
+            break
+        time.sleep(_GAP_FILL_DELAY)
+        for r in missing:
+            per_region[(r["lat"], r["lon"])] = _fetch_region(r)
+
+    all_flights = []
+    for r in regions:
+        all_flights.extend(per_region[(r["lat"], r["lon"])])
     return all_flights
 
 
