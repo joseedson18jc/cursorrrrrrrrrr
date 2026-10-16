@@ -580,6 +580,13 @@ def _classify_and_publish(all_adsb_flights):
         latest_data['last_updated'] = datetime.utcnow().isoformat()
 
 
+# Per-region fallback for transient adsb.lol failures.
+_REGION_RETRIES = 2                 # extra attempts after the first
+_REGION_STALE_MAX_AGE = 180         # seconds a cached region may stand in for a failed one
+_region_cache: dict = {}            # (lat, lon) -> (fetched_at, aircraft list)
+_region_cache_lock = threading.Lock()
+
+
 def _fetch_adsb_lol_regions():
     """Fetch all adsb.lol regions in parallel (~3-5s). Returns raw aircraft list."""
     regions = [
@@ -592,14 +599,35 @@ def _fetch_adsb_lol_regions():
     ]
 
     def _fetch_region(r):
+        key = (r["lat"], r["lon"])
         url = f"https://api.adsb.lol/v2/lat/{r['lat']}/lon/{r['lon']}/dist/{r['dist']}"
-        try:
-            res = fetch_with_curl(url, timeout=10)
-            if res.status_code == 200:
-                data = res.json()
-                return data.get("ac", [])
-        except (requests.RequestException, ConnectionError, TimeoutError, ValueError, KeyError, json.JSONDecodeError, OSError) as e:
-            logger.warning(f"Region fetch failed for lat={r['lat']}: {e}")
+        # adsb.lol intermittently answers HTTP 500/429 for these very large
+        # requests. A single failure used to drop the whole region (North
+        # America alone is ~6,000 aircraft) for a full cycle, so the flight
+        # count swung between ~4,500 and ~9,500 from one refresh to the next.
+        for attempt in range(_REGION_RETRIES + 1):
+            try:
+                res = fetch_with_curl(url, timeout=12)
+                if res.status_code == 200:
+                    ac = res.json().get("ac", [])
+                    if ac:
+                        with _region_cache_lock:
+                            _region_cache[key] = (time.time(), ac)
+                        return ac
+                    logger.warning(f"adsb.lol region {key}: empty response")
+                else:
+                    logger.warning(f"adsb.lol region {key}: HTTP {res.status_code} (attempt {attempt + 1})")
+            except Exception as e:  # incl. fetch_with_curl's circuit-breaker error; never abort the other regions
+                logger.warning(f"adsb.lol region {key} failed (attempt {attempt + 1}): {e}")
+            if attempt < _REGION_RETRIES:
+                time.sleep(1.0 + attempt * 1.5)
+        # Still failing: reuse this region's last good data if it is recent
+        # enough, so one bad response does not blank a whole continent.
+        with _region_cache_lock:
+            cached = _region_cache.get(key)
+        if cached and time.time() - cached[0] <= _REGION_STALE_MAX_AGE:
+            logger.warning(f"adsb.lol region {key}: using cached data ({time.time() - cached[0]:.0f}s old)")
+            return cached[1]
         return []
 
     all_flights = []
