@@ -8,6 +8,9 @@ class HealthResponse(BaseModel):
     sources: Dict[str, int]
     freshness: Dict[str, str]
     uptime_seconds: int
+    # Short id of the serving instance. On multi-instance hosts every request may
+    # reach a different copy; this lets monitoring tell them apart.
+    instance: str = ""
 
 
 class RefreshResponse(BaseModel):

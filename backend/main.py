@@ -5,6 +5,8 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 _start_time = time.time()
+import uuid as _uuid
+_INSTANCE_ID = _uuid.uuid4().hex[:8]
 
 # ---------------------------------------------------------------------------
 # Docker Swarm Secrets support
@@ -105,6 +107,22 @@ async def lifespan(app: FastAPI):
     from services.env_check import validate_env
     validate_env(strict=True)
 
+    # Warm start: load the shared snapshot BEFORE the server starts accepting
+    # traffic, so a freshly started instance never answers with an empty map.
+    # Bounded: a slow or unreachable snapshot store delays startup by at most
+    # 12 s, after which the instance starts normally and keeps restoring in the
+    # background (it never blocks live data: every merge is atomic and only
+    # fills what the instance does not have yet).
+    try:
+        from services import snapshot
+        _restore_thread = threading.Thread(target=snapshot.restore, daemon=True, name="snapshot-restore")
+        _restore_thread.start()
+        _restore_thread.join(timeout=12)
+        if _restore_thread.is_alive():
+            logger.warning("Snapshot restore still running after 12 s — starting without waiting for it")
+    except Exception as e:
+        logger.warning(f"Snapshot restore skipped: {e}")
+
     # Start AIS stream first — it loads the disk cache (instant ships) then
     # begins accumulating live vessel data via WebSocket in the background.
     start_ais_stream()
@@ -121,13 +139,6 @@ async def lifespan(app: FastAPI):
     # (retries every 3s) will pick up data piecemeal as each fetcher finishes.
     def _background_preload():
         logger.info("=== PRELOADING DATA (background — server already accepting requests) ===")
-        # Warm start: load the shared snapshot in its own thread, concurrently with
-        # the first live fetch, so a slow download can never delay live data.
-        try:
-            from services import snapshot
-            threading.Thread(target=snapshot.restore, daemon=True, name="snapshot-restore").start()
-        except Exception as e:
-            logger.warning(f"Snapshot restore skipped: {e}")
         try:
             update_all_data()
             logger.info("=== PRELOAD COMPLETE ===")
@@ -416,6 +427,7 @@ async def health_check(request: Request):
         },
         "freshness": dict(source_timestamps),
         "uptime_seconds": round(time.time() - _start_time),
+        "instance": _INSTANCE_ID,
     }
 
 
