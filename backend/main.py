@@ -121,11 +121,11 @@ async def lifespan(app: FastAPI):
     # (retries every 3s) will pick up data piecemeal as each fetcher finishes.
     def _background_preload():
         logger.info("=== PRELOADING DATA (background — server already accepting requests) ===")
-        # Warm start: load the shared snapshot first so a fresh instance serves
-        # ships/satellites/news within seconds instead of minutes.
+        # Warm start: load the shared snapshot in its own thread, concurrently with
+        # the first live fetch, so a slow download can never delay live data.
         try:
             from services import snapshot
-            snapshot.restore()
+            threading.Thread(target=snapshot.restore, daemon=True, name="snapshot-restore").start()
         except Exception as e:
             logger.warning(f"Snapshot restore skipped: {e}")
         try:
@@ -388,6 +388,7 @@ def api_health_upstreams(request: Request):
     from services.fetchers.flights import get_region_status
     return {"host_hint": socket.gethostname(), "probes": results,
             "flight_regions": get_region_status(),
+            "snapshot": __import__("services.snapshot", fromlist=["status"]).status(),
             "uptime_seconds": round(time.time() - _start_time)}
 
 

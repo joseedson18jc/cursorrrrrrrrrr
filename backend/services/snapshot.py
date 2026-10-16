@@ -201,23 +201,63 @@ def _age_seconds(updated_at: str) -> float:
     return (datetime.now(timezone.utc) - ts).total_seconds()
 
 
+_status: dict = {}
+
+
+def status() -> dict:
+    """Restore outcome for this instance (diagnostics for /api/health/upstreams)."""
+    return {"enabled": enabled(), **_status}
+
+
+def _load_row(kind: str):
+    """Download one snapshot row. Returns (kind, row_or_None, seconds, error)."""
+    t0 = time.time()
+    try:
+        rows = _rpc("load_snapshot", {"secret": _SECRET, "snap_id": kind}, timeout=15)
+        return kind, (rows[0] if rows else None), time.time() - t0, None
+    except Exception as e:
+        return kind, None, time.time() - t0, str(e)[:160]
+
+
 def restore() -> None:
     """Load shared snapshots into this instance. Never overwrites data this
-    instance already fetched itself. Safe to call when disabled."""
+    instance already fetched itself. Safe to call when disabled, and safe to
+    run concurrently with the first live fetch (it runs in its own thread).
+
+    The three rows download in parallel; they are then applied in order of
+    importance (flights, fast, slow)."""
+    import concurrent.futures
+    t_start = time.time()
+    _status.clear()
+    _status["started_at"] = t_start
     if not enabled():
         logger.info("Snapshot store not configured — cold start without warm data")
         return
-    for kind, max_age in (("flights", FLIGHTS_MAX_AGE), ("fast", FAST_MAX_AGE), ("slow", SLOW_MAX_AGE)):
+    kinds = (("flights", FLIGHTS_MAX_AGE), ("fast", FAST_MAX_AGE), ("slow", SLOW_MAX_AGE))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+        loaded = {k: v for k, *v in pool.map(_load_row, [k for k, _ in kinds])}
+    _status["download_secs"] = round(time.time() - t_start, 2)
+
+    for kind, max_age in kinds:
+        row, dl_secs, err = loaded[kind]
+        info = {"download_secs": round(dl_secs, 2)}
+        _status[kind] = info
         try:
-            rows = _rpc("load_snapshot", {"secret": _SECRET, "snap_id": kind}, timeout=30)
-            if not rows:
+            if err:
+                info["outcome"] = "download_failed"; info["error"] = err
+                logger.warning(f"Snapshot {kind}: download failed after {dl_secs:.1f}s: {err}")
+                continue
+            if not row:
+                info["outcome"] = "none_stored"
                 logger.info(f"Snapshot {kind}: none stored yet")
                 continue
-            age = _age_seconds(rows[0]["updated_at"])
+            age = _age_seconds(row["updated_at"])
+            info["age_s"] = round(age)
             if age > max_age:
+                info["outcome"] = "too_old"
                 logger.info(f"Snapshot {kind}: {age:.0f}s old (> {max_age}s) — skipped")
                 continue
-            snap = _decode(rows[0]["payload"])
+            snap = _decode(row["payload"])
             if kind == "flights":
                 from services.fetchers.flights import adopt_snapshot_regions, publish_from_region_cache
                 adopted = adopt_snapshot_regions(snap.get("regions") or {}, max_age=FLIGHTS_MAX_AGE)
@@ -227,8 +267,10 @@ def restore() -> None:
                     if _is_empty(latest_data.get("military_flights")) and mil.get("military_flights"):
                         latest_data["military_flights"] = mil["military_flights"]
                         latest_data["uavs"] = mil.get("uavs") or []
+                info.update(outcome="restored", regions=adopted, published=published,
+                            military=len(mil.get("military_flights") or []))
                 logger.info(f"Snapshot flights restored ({age:.0f}s old): {adopted} regions, "
-                            f"{published} aircraft published, {len(mil.get('military_flights') or [])} military")
+                            f"{published} aircraft published, {info['military']} military")
             elif kind == "fast":
                 from services.ais_stream import merge_snapshot_vessels
                 n = merge_snapshot_vessels(snap.get("vessels") or [])
@@ -236,8 +278,9 @@ def restore() -> None:
                     if _is_empty(latest_data.get("satellites")) and snap.get("satellites"):
                         latest_data["satellites"] = snap["satellites"]
                         latest_data["satellite_source"] = snap.get("satellite_source") or "snapshot"
+                info.update(outcome="restored", vessels=n, satellites=len(snap.get("satellites") or []))
                 logger.info(f"Snapshot fast restored ({age:.0f}s old): {n} vessels, "
-                            f"{len(snap.get('satellites') or [])} satellites")
+                            f"{info['satellites']} satellites")
             else:
                 restored = []
                 with _data_lock:
@@ -248,8 +291,10 @@ def restore() -> None:
                     for k, ts in (snap.get("freshness") or {}).items():
                         if k in restored:
                             source_timestamps.setdefault(k, ts)
+                info.update(outcome="restored", layers=restored)
                 logger.info(f"Snapshot slow restored ({age:.0f}s old): {', '.join(restored) or 'nothing new'}")
         except Exception as e:
+            info["outcome"] = "apply_failed"; info["error"] = str(e)[:160]
             logger.warning(f"Snapshot restore ({kind}) failed (non-fatal): {e}")
     # Publish restored vessels immediately instead of waiting for the next fast cycle.
     try:
@@ -257,3 +302,4 @@ def restore() -> None:
         fetch_ships()
     except Exception as e:
         logger.debug(f"Post-restore ship publish failed: {e}")
+    _status["total_secs"] = round(time.time() - t_start, 2)
