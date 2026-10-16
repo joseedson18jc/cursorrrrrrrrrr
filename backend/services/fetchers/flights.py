@@ -582,7 +582,7 @@ def _classify_and_publish(all_adsb_flights):
 
 # Per-region fallback for transient adsb.lol failures.
 _REGION_RETRIES = 2                 # extra attempts after the first
-_REGION_STALE_MAX_AGE = 180         # seconds a cached region may stand in for a failed one
+_REGION_STALE_MAX_AGE = 240         # seconds a cached region may stand in for a failed one
 _region_cache: dict = {}            # (lat, lon) -> (fetched_at, aircraft list)
 _region_cache_lock = threading.Lock()
 _region_status: dict = {}           # "lat,lon" -> last outcome, for /api/health/upstreams
@@ -618,7 +618,9 @@ def _fetch_adsb_lol_regions():
         t0 = time.time()
         for attempt in range(_REGION_RETRIES + 1):
             try:
-                res = fetch_with_curl(url, timeout=12)
+                # resilient: Python requests only, no shared circuit breaker (one
+                # slow region used to make the other five fail for 2 minutes).
+                res = fetch_with_curl(url, timeout=15, resilient=True)
                 if res.status_code == 200:
                     ac = res.json().get("ac", [])
                     if ac:
@@ -636,7 +638,8 @@ def _fetch_adsb_lol_regions():
                 last = f"{type(e).__name__}: {str(e)[:80]}"
                 logger.warning(f"adsb.lol region {key} failed (attempt {attempt + 1}): {e}")
             if attempt < _REGION_RETRIES:
-                time.sleep(1.0 + attempt * 1.5)
+                # Back off harder after 429 (rate limited) than after a 5xx.
+                time.sleep((3.0 if last == "HTTP 429" else 1.0) * (attempt + 1))
         # Still failing: reuse this region's last good data if it is recent
         # enough, so one bad response does not blank a whole continent.
         with _region_cache_lock:
@@ -655,7 +658,9 @@ def _fetch_adsb_lol_regions():
         return []
 
     all_flights = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+    # Three at a time: six simultaneous multi-megabyte requests from shared cloud
+    # egress addresses is what draws adsb.lol's HTTP 429 rate limit.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
         results = pool.map(_fetch_region, regions)
     for region_flights in results:
         all_flights.extend(region_flights)

@@ -160,18 +160,30 @@ class _DummyResponse:
             raise Exception(f"HTTP {self.status_code}: {self.text[:100]}")
 
 
-def fetch_with_curl(url, method="GET", json_data=None, timeout=15, headers=None):
+def fetch_with_curl(url, method="GET", json_data=None, timeout=15, headers=None, resilient=False):
     """Wrapper to bypass aggressive local firewall that blocks Python but permits curl.
 
     Falls back to running curl through Git bash, which has the TLS features
     (brotli, zstd, libpsl) needed to pass CDN fingerprint checks that block
     both Python requests and the barebones Windows system curl.
+
+    resilient=True is for callers that do their own retry/caching (the adsb.lol
+    region fetches). It uses Python requests only and returns the response as
+    is, whatever its HTTP status; the caller inspects status_code. It never
+    reads or sets the shared circuit breaker or the curl-fallback cache, so one
+    slow or rate-limited request can no longer make every other request to the
+    same host fail for the next two minutes. Network errors still raise.
     """
     default_headers = {
         "User-Agent": default_user_agent(),
     }
     if headers:
         default_headers.update(headers)
+
+    if resilient:
+        if method == "POST":
+            return _session.post(url, json=json_data, timeout=(min(5, timeout), timeout), headers=default_headers)
+        return _session.get(url, timeout=(min(5, timeout), timeout), headers=default_headers)
 
     domain = urlparse(url).netloc
 
@@ -205,7 +217,11 @@ def fetch_with_curl(url, method="GET", json_data=None, timeout=15, headers=None)
 
     # Curl fallback — reached from both _skip_requests and requests-exception paths
     _CURL_PATH = shutil.which("curl") or "curl"
-    cmd = [_CURL_PATH, "-s", "-w", "\n%{http_code}"]
+    # --compressed: ask for gzip like Python requests does (large JSON feeds are
+    # several times smaller); --max-time: bound the transfer ourselves so a slow
+    # response ends as a normal failure instead of being killed by the outer
+    # subprocess timeout.
+    cmd = [_CURL_PATH, "-s", "--compressed", "--max-time", str(int(timeout)), "-w", "\n%{http_code}"]
     for k, v in default_headers.items():
         cmd += ["-H", f"{k}: {v}"]
     if method == "POST" and json_data:
