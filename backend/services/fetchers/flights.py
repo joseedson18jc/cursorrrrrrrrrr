@@ -591,6 +591,67 @@ _GAP_FILL_BUDGET = 35               # skip gap-fill if the first pass already to
 _region_status: dict = {}           # "lat,lon" -> last outcome, for /api/health/upstreams
 
 
+# ---- sharing region data between instances (see services/snapshot.py) ----
+# Only the fields _classify_and_publish reads; keeps the shared snapshot small.
+_SNAP_FIELDS = ("hex", "flight", "r", "t", "lat", "lon", "alt_baro", "track", "gs", "squawk", "nac_p")
+SNAPSHOT_REQUIRED_REGIONS = ("39.8,-98.5", "50.0,15.0", "35.0,105.0")   # N. America, Europe, Asia
+
+
+def export_regions_for_snapshot(max_age: float = 150) -> dict:
+    """Compact copy of recent per-region aircraft lists: {"lat,lon": {"at", "ac"}}."""
+    now = time.time()
+    out = {}
+    with _region_cache_lock:
+        for (lat, lon), (at, ac) in _region_cache.items():
+            if now - at > max_age:
+                continue
+            rows = []
+            for a in ac:
+                if a.get("lat") is None or a.get("lon") is None:
+                    continue
+                row = {k: a[k] for k in _SNAP_FIELDS if a.get(k) is not None}
+                row["lat"] = round(float(row["lat"]), 4)
+                row["lon"] = round(float(row["lon"]), 4)
+                rows.append(row)
+            out[f"{lat},{lon}"] = {"at": at, "ac": rows}
+    return out
+
+
+def adopt_snapshot_regions(regions: dict, max_age: float = 150) -> int:
+    """Seed the region cache from another instance's snapshot. Never replaces
+    data this instance fetched more recently. Returns regions adopted."""
+    now = time.time()
+    adopted = 0
+    with _region_cache_lock:
+        for skey, v in (regions or {}).items():
+            try:
+                lat, lon = (float(x) for x in skey.split(","))
+                at = float(v["at"])
+            except (ValueError, KeyError, TypeError):
+                continue
+            if now - at > max_age or not v.get("ac"):
+                continue
+            cur = _region_cache.get((lat, lon))
+            if cur and cur[0] >= at:
+                continue
+            _region_cache[(lat, lon)] = (at, v["ac"])
+            adopted += 1
+    return adopted
+
+
+def publish_from_region_cache() -> int:
+    """Classify and publish whatever the region cache holds, but only while this
+    instance has no flights of its own yet (right after a snapshot restore)."""
+    with _data_lock:
+        if latest_data.get("commercial_flights"):
+            return 0
+    with _region_cache_lock:
+        everything = [a for (_, ac) in _region_cache.values() for a in ac]
+    if everything:
+        _classify_and_publish(everything)
+    return len(everything)
+
+
 def get_region_status() -> dict:
     """Last outcome per adsb.lol region on THIS instance (diagnostics)."""
     now = time.time()

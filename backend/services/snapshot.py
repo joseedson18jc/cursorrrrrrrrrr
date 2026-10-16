@@ -7,10 +7,15 @@ layers, so visitors see an empty or half-filled map depending on which
 instance answers. Instances therefore save a compressed snapshot of the
 slow-to-rebuild data to Supabase, and every new instance loads it on boot.
 
-What is stored (two rows):
+What is stored (three rows):
+  flights — the last 150 s of per-region adsb.lol aircraft (11 fields each,
+          positions rounded to ~10 m) plus the military list. A new instance
+          adopts them as its region cache and publishes immediately, and a
+          region that adsb.lol refuses (HTTP 429) can be covered by a sibling's
+          copy. Saved only when the three largest regions are present, so a
+          partially failed instance can never overwrite a complete snapshot.
   fast  — AIS vessel store (with per-vessel timestamps) and satellites.
-          Restored only if <= FAST_MAX_AGE old; flights are NOT stored because
-          they refill from adsb.lol within seconds and stale positions mislead.
+          Restored only if <= FAST_MAX_AGE old.
   slow  — news, quakes, fires, GDELT, frontlines, outages, KiwiSDR, CCTV,
           markets, weather. Restored if <= SLOW_MAX_AGE old.
 Bundled static datasets (power plants, data centers, bases) load from disk
@@ -49,6 +54,9 @@ FAST_MAX_AGE = 10 * 60        # moving objects: older positions are misleading
 SLOW_MAX_AGE = 6 * 3600       # news/quakes/fires stay useful for hours
 FAST_SAVE_INTERVAL = 120      # seconds between fast saves per instance
 WARMUP_SECONDS = 90           # never save before this instance has fetched itself
+FLIGHTS_MAX_AGE = 150         # flight lists older than this are not shared or restored
+FLIGHTS_SAVE_INTERVAL = 75
+FLIGHTS_WARMUP = 45
 
 SLOW_KEYS = [
     "news", "stocks", "oil", "weather", "earthquakes", "frontlines", "gdelt",
@@ -135,6 +143,40 @@ def save_fast() -> None:
         _save_lock.release()
 
 
+_last_flights_save = 0.0
+
+
+def save_flights() -> None:
+    """Share this instance's fresh per-region flight lists and the military list.
+
+    Guard: only save a COMPLETE picture (the three largest regions present),
+    so an instance that is itself missing a region can never overwrite a good
+    shared snapshot with a worse one."""
+    global _last_flights_save
+    if not enabled() or time.time() - _started < FLIGHTS_WARMUP:
+        return
+    if time.time() - _last_flights_save < FLIGHTS_SAVE_INTERVAL:
+        return
+    if not _save_lock.acquire(blocking=False):
+        return
+    try:
+        from services.fetchers.flights import export_regions_for_snapshot, SNAPSHOT_REQUIRED_REGIONS
+        regions = export_regions_for_snapshot(max_age=FLIGHTS_MAX_AGE)
+        if not all(regions.get(k, {}).get("ac") for k in SNAPSHOT_REQUIRED_REGIONS):
+            return
+        with _data_lock:
+            mil = {"military_flights": list(latest_data.get("military_flights") or []),
+                   "uavs": list(latest_data.get("uavs") or [])}
+        n = sum(len(v["ac"]) for v in regions.values())
+        _save("flights", {"regions": regions, "military": mil, "saved_at": time.time()},
+              {"regions": len(regions), "aircraft": n, "military": len(mil["military_flights"])})
+        _last_flights_save = time.time()
+    except Exception as e:
+        logger.warning(f"Snapshot save (flights) failed: {e}")
+    finally:
+        _save_lock.release()
+
+
 def save_slow() -> None:
     """Called after each slow-tier cycle."""
     if not enabled() or time.time() - _started < WARMUP_SECONDS:
@@ -165,7 +207,7 @@ def restore() -> None:
     if not enabled():
         logger.info("Snapshot store not configured — cold start without warm data")
         return
-    for kind, max_age in (("fast", FAST_MAX_AGE), ("slow", SLOW_MAX_AGE)):
+    for kind, max_age in (("flights", FLIGHTS_MAX_AGE), ("fast", FAST_MAX_AGE), ("slow", SLOW_MAX_AGE)):
         try:
             rows = _rpc("load_snapshot", {"secret": _SECRET, "snap_id": kind}, timeout=30)
             if not rows:
@@ -176,7 +218,18 @@ def restore() -> None:
                 logger.info(f"Snapshot {kind}: {age:.0f}s old (> {max_age}s) — skipped")
                 continue
             snap = _decode(rows[0]["payload"])
-            if kind == "fast":
+            if kind == "flights":
+                from services.fetchers.flights import adopt_snapshot_regions, publish_from_region_cache
+                adopted = adopt_snapshot_regions(snap.get("regions") or {}, max_age=FLIGHTS_MAX_AGE)
+                published = publish_from_region_cache() if adopted else 0
+                mil = snap.get("military") or {}
+                with _data_lock:
+                    if _is_empty(latest_data.get("military_flights")) and mil.get("military_flights"):
+                        latest_data["military_flights"] = mil["military_flights"]
+                        latest_data["uavs"] = mil.get("uavs") or []
+                logger.info(f"Snapshot flights restored ({age:.0f}s old): {adopted} regions, "
+                            f"{published} aircraft published, {len(mil.get('military_flights') or [])} military")
+            elif kind == "fast":
                 from services.ais_stream import merge_snapshot_vessels
                 n = merge_snapshot_vessels(snap.get("vessels") or [])
                 with _data_lock:

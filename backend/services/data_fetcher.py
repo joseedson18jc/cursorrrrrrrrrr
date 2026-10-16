@@ -72,6 +72,7 @@ def update_fast_data():
     # Share slow-to-rebuild state with sibling/future instances (no-op unless configured).
     from services import snapshot
     snapshot.save_fast()
+    snapshot.save_flights()
 
 def update_slow_data():
     """Slow-tier: contextual + enrichment data that refreshes less often (every 5–10 min)."""
