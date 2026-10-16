@@ -585,6 +585,14 @@ _REGION_RETRIES = 2                 # extra attempts after the first
 _REGION_STALE_MAX_AGE = 180         # seconds a cached region may stand in for a failed one
 _region_cache: dict = {}            # (lat, lon) -> (fetched_at, aircraft list)
 _region_cache_lock = threading.Lock()
+_region_status: dict = {}           # "lat,lon" -> last outcome, for /api/health/upstreams
+
+
+def get_region_status() -> dict:
+    """Last outcome per adsb.lol region on THIS instance (diagnostics)."""
+    now = time.time()
+    with _region_cache_lock:
+        return {k: {**v, "age_s": round(now - v["at"])} for k, v in _region_status.items()}
 
 
 def _fetch_adsb_lol_regions():
@@ -605,6 +613,9 @@ def _fetch_adsb_lol_regions():
         # requests. A single failure used to drop the whole region (North
         # America alone is ~6,000 aircraft) for a full cycle, so the flight
         # count swung between ~4,500 and ~9,500 from one refresh to the next.
+        skey = f"{r['lat']},{r['lon']}"
+        last = "no attempt"
+        t0 = time.time()
         for attempt in range(_REGION_RETRIES + 1):
             try:
                 res = fetch_with_curl(url, timeout=12)
@@ -613,11 +624,16 @@ def _fetch_adsb_lol_regions():
                     if ac:
                         with _region_cache_lock:
                             _region_cache[key] = (time.time(), ac)
+                            _region_status[skey] = {"result": "ok", "n": len(ac), "attempts": attempt + 1,
+                                                    "secs": round(time.time() - t0, 1), "at": time.time()}
                         return ac
+                    last = "HTTP 200 but empty"
                     logger.warning(f"adsb.lol region {key}: empty response")
                 else:
+                    last = f"HTTP {res.status_code}"
                     logger.warning(f"adsb.lol region {key}: HTTP {res.status_code} (attempt {attempt + 1})")
             except Exception as e:  # incl. fetch_with_curl's circuit-breaker error; never abort the other regions
+                last = f"{type(e).__name__}: {str(e)[:80]}"
                 logger.warning(f"adsb.lol region {key} failed (attempt {attempt + 1}): {e}")
             if attempt < _REGION_RETRIES:
                 time.sleep(1.0 + attempt * 1.5)
@@ -625,6 +641,14 @@ def _fetch_adsb_lol_regions():
         # enough, so one bad response does not blank a whole continent.
         with _region_cache_lock:
             cached = _region_cache.get(key)
+            if cached and time.time() - cached[0] <= _REGION_STALE_MAX_AGE:
+                _region_status[skey] = {"result": "cached", "n": len(cached[1]), "last_error": last,
+                                        "attempts": _REGION_RETRIES + 1, "secs": round(time.time() - t0, 1),
+                                        "at": time.time()}
+            else:
+                _region_status[skey] = {"result": "MISSING", "n": 0, "last_error": last,
+                                        "attempts": _REGION_RETRIES + 1, "secs": round(time.time() - t0, 1),
+                                        "at": time.time()}
         if cached and time.time() - cached[0] <= _REGION_STALE_MAX_AGE:
             logger.warning(f"adsb.lol region {key}: using cached data ({time.time() - cached[0]:.0f}s old)")
             return cached[1]

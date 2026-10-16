@@ -385,7 +385,10 @@ def api_health_upstreams(request: Request):
 
     with _cf.ThreadPoolExecutor(max_workers=len(_UPSTREAM_PROBES)) as pool:
         results = dict(pool.map(_probe, _UPSTREAM_PROBES.items()))
-    return {"host_hint": socket.gethostname(), "probes": results}
+    from services.fetchers.flights import get_region_status
+    return {"host_hint": socket.gethostname(), "probes": results,
+            "flight_regions": get_region_status(),
+            "uptime_seconds": round(time.time() - _start_time)}
 
 
 @app.get("/api/health", response_model=HealthResponse)
