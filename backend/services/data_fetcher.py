@@ -69,6 +69,9 @@ def update_fast_data():
     with _data_lock:
         latest_data['last_updated'] = datetime.utcnow().isoformat()
     logger.info("Fast-tier update complete.")
+    # Share slow-to-rebuild state with sibling/future instances (no-op unless configured).
+    from services import snapshot
+    snapshot.save_fast()
 
 def update_slow_data():
     """Slow-tier: contextual + enrichment data that refreshes less often (every 5–10 min)."""
@@ -94,6 +97,8 @@ def update_slow_data():
         futures = [executor.submit(func) for func in slow_funcs]
         concurrent.futures.wait(futures)
     logger.info("Slow-tier update complete.")
+    from services import snapshot
+    snapshot.save_slow()
 
 def update_all_data():
     """Full refresh — all tiers run IN PARALLEL for fastest startup."""

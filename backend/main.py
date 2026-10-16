@@ -121,6 +121,13 @@ async def lifespan(app: FastAPI):
     # (retries every 3s) will pick up data piecemeal as each fetcher finishes.
     def _background_preload():
         logger.info("=== PRELOADING DATA (background — server already accepting requests) ===")
+        # Warm start: load the shared snapshot first so a fresh instance serves
+        # ships/satellites/news within seconds instead of minutes.
+        try:
+            from services import snapshot
+            snapshot.restore()
+        except Exception as e:
+            logger.warning(f"Snapshot restore skipped: {e}")
         try:
             update_all_data()
             logger.info("=== PRELOAD COMPLETE ===")

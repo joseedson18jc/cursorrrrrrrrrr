@@ -207,6 +207,52 @@ def get_ais_vessels() -> list[dict]:
         return result
 
 
+# Country is re-derived from the MMSI and 'source' is never served, so neither
+# is stored; positions are rounded to ~10 m to keep the snapshot small.
+_SNAPSHOT_FIELDS = ("name", "type", "lat", "lng", "heading", "sog", "cog", "callsign",
+                    "destination", "imo", "ais_type_code", "_updated")
+_SNAPSHOT_ROUND = {"lat": 4, "lng": 4, "heading": 0, "sog": 1, "cog": 0, "_updated": 0}
+
+
+def export_vessels_for_snapshot(max_age: int = 900) -> list[dict]:
+    """Compact copy of displayable, fresh vessels for the shared warm-start snapshot."""
+    cutoff = time.time() - max_age
+    out = []
+    with _vessels_lock:
+        for mmsi, v in _vessels.items():
+            if v.get("type") == "other" or not v.get("lat") or not v.get("lng"):
+                continue
+            if v.get("_updated", 0) < cutoff:
+                continue
+            row = {k: v[k] for k in _SNAPSHOT_FIELDS if k in v and v[k] not in (None, "", 0, "UNKNOWN")}
+            for k, nd in _SNAPSHOT_ROUND.items():
+                if isinstance(row.get(k), float):
+                    row[k] = round(row[k], nd) if nd else int(round(row[k]))
+            row["mmsi"] = mmsi
+            out.append(row)
+    return out
+
+
+def merge_snapshot_vessels(rows: list[dict]) -> int:
+    """Seed the store from a snapshot; never replaces a fresher local fix.
+    Rows keep their original _updated, so normal stale-pruning still applies."""
+    n = 0
+    with _vessels_lock:
+        for row in rows:
+            mmsi = row.get("mmsi")
+            if not isinstance(mmsi, int):
+                continue
+            cur = _vessels.get(mmsi)
+            if cur and cur.get("_updated", 0) >= row.get("_updated", 0):
+                continue
+            merged = dict(cur or {})
+            merged.update({k: v for k, v in row.items() if k != "mmsi"})
+            merged["mmsi"] = mmsi
+            _vessels[mmsi] = merged
+            n += 1
+    return n
+
+
 def ingest_ais_catcher(msgs: list[dict]) -> int:
     """Ingest decoded AIS messages from AIS-catcher HTTP feed.
     Returns number of vessels updated."""

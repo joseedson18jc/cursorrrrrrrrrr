@@ -355,7 +355,7 @@ The backend is a long-lived process (scheduler, AIS WebSocket, in-memory store),
 | `…-api` | `backend` | Container (auto-detected from `backend/Dockerfile.vercel`) | Set `OPERATOR_HANDLE`, optionally `AIS_API_KEY` / OpenSky keys |
 | `…-web` | `frontend` | Next.js | Set `BACKEND_URL` to the API project's URL |
 
-The container is paused when idle; the first visit after a quiet spell shows an empty map for ~30s while the fetchers refill.
+Vercel runs the backend as several short-lived instances, each with its own memory. To keep them consistent, set `SNAPSHOT_SUPABASE_URL`, `SNAPSHOT_SUPABASE_KEY` and `SNAPSHOT_SECRET` on the API project and run `backend/supabase/snapshot_store.sql` in a (free) Supabase project: warmed instances save ships, satellites and the slow layers there, and every new instance loads them on boot, serving a full map within seconds instead of minutes. Without these settings a fresh instance shows a sparse map for a few minutes while it rebuilds.
 
 **Render** — one click, both services: `https://render.com/deploy?repo=<your fork URL>`. Reads `render.yaml`; uses `backend/Dockerfile.render`. Free instances have 512 MB RAM and no persistent disk; upgrade the API service if you see out-of-memory restarts.
 
